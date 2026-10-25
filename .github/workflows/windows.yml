@@ -27,8 +27,8 @@ jobs:
       - name: Configure Release
         run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build application and packaging tools
-        run: cmake --build build-release --target "Cadenza" "style-probe" "sty-to-cstyle" "style-scan"
+      - name: Build all targets
+        run: cmake --build build-release
 
       - name: Run tests
         run: ctest --test-dir build-release --output-on-failure
