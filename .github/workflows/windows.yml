@@ -1,4 +1,3 @@
-
 name: Windows Release Build
 
 on:
@@ -18,6 +17,11 @@ jobs:
       - name: Clone JUCE 8.0.13
         run: git clone --depth 1 --branch 8.0.13 https://github.com/juce-framework/JUCE.git lib/JUCE
 
+      - name: Install FluidSynth (vcpkg)
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT/vcpkg.exe" install fluidsynth:x64-windows --clean-after-build
+
       - name: Set up MSVC developer environment
         uses: ilammy/msvc-dev-cmd@v1
 
@@ -25,7 +29,15 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Configure Release
-        run: cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
+        shell: pwsh
+        run: |
+          cmake -S . -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            -DVCPKG_TARGET_TRIPLET=x64-windows `
+            -DCMAKE_PREFIX_PATH="$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows" 2>&1 | Tee-Object -FilePath configure.log
+          if (Select-String -Path configure.log -Pattern "FluidSynth NOT found" -Quiet) {
+            throw "FluidSynth was not found during configure - build stopped."
+          }
 
       - name: Build all targets
         run: cmake --build build-release
@@ -37,10 +49,29 @@ jobs:
         shell: pwsh
         run: ./scripts/package.ps1 -BuildDir build-release -OutDir dist -Zip
 
+      - name: Stage raw build with DLLs and SF2 folder
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem build-release -Recurse -Filter "Cadenza*.exe" |
+                 Where-Object { $_.FullName -match "_artefacts" } | Select-Object -First 1
+          New-Item -ItemType Directory -Force raw-dist | Out-Null
+          Copy-Item "$($exe.DirectoryName)/*" raw-dist -Recurse -Force
+          Copy-Item "$env:VCPKG_INSTALLATION_ROOT/installed/x64-windows/bin/*.dll" raw-dist -Force
+          New-Item -ItemType Directory -Force raw-dist/resources/sf2 | Out-Null
+          if (Test-Path resources) { Copy-Item resources/* raw-dist/resources -Recurse -Force }
+
       - name: Upload ZIP package
         uses: actions/upload-artifact@v4
         with:
           name: Cadenza-Windows-Release
           path: dist/Cadenza-*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload raw build (EXE + DLLs)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cadenza-Raw-With-DLLs
+          path: raw-dist
           if-no-files-found: error
           retention-days: 14
